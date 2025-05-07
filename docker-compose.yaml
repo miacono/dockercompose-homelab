@@ -1,0 +1,52 @@
+secrets:
+  encryption_key:
+    file: ./encryption_key.txt # this contains my secret key
+
+services:
+  busybox:
+    image: busybox
+    command: "ls /data"
+    volumes:
+      - jfsvolume:/data
+
+
+  minio:
+    container_name: minio
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ROOTNAME
+      MINIO_ROOT_PASSWORD: CHANGEME123
+    volumes:
+      - /tmp/minio/data:/data
+    command: server /data --console-address ":9001"
+
+
+  createbuckets:
+    image: quay.io/minio/mc:RELEASE.2025-03-12T17-29-24Z
+    depends_on:
+      - minio
+    restart: on-failure
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      /usr/bin/mc alias set dockerminio http://minio:9000 ROOTNAME CHANGEME123;
+      /usr/bin/mc mb dockerminio/megas4/subdir;
+      exit 0;
+      "
+
+volumes:
+  jfsvolume:
+    driver: juicedata/juicefs
+    driver_opts:
+      name: jfsvolume
+      # SQLite creates the database file in the plugin container's local path,
+      # and sqlite:// will fail when the service is restarted.
+      # (See https://github.com/juicedata/docker-volume-juicefs/issues/37 for details)
+      metaurl: http://localhost:9000/
+      storage: S3
+      bucket: megas4
+      access-key: ROOTNAME
+      secret-key: CHANGEME123
