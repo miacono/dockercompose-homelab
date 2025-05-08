@@ -1,6 +1,6 @@
 secrets:
-  encryption_key:
-    file: ./encryption_key.txt # this contains my secret key
+  juicefs_encryption_key:
+    file: ./secrets/juicefs-priv-key.pem
 
 services:
   busybox:
@@ -17,8 +17,9 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: ROOTNAME
-      MINIO_ROOT_PASSWORD: CHANGEME123
+      MINIO_ROOT_USER: ${MINIO_ADMIN_USERNAME}
+      MINIO_ROOT_PASSWORD: ${MINIO_ADMIN_PASSPHRASE}
+    restart: always
     volumes:
       - /tmp/minio/data:/data
     command: server /data --console-address ":9001"
@@ -32,7 +33,7 @@ services:
     entrypoint: >
       /bin/sh -c "
       sleep 5;
-      /usr/bin/mc alias set dockerminio http://minio:9000 ROOTNAME CHANGEME123;
+      /usr/bin/mc alias set dockerminio http://minio:9000 ${MINIO_ADMIN_USERNAME} ${MINIO_ADMIN_PASSPHRASE};
       /usr/bin/mc mb dockerminio/megas4/subdir;
       exit 0;
       "
@@ -48,5 +49,5 @@ volumes:
       metaurl: http://localhost:9000/
       storage: S3
       bucket: megas4
-      access-key: ROOTNAME
-      secret-key: CHANGEME123
+      access-key: ${MINIO_ADMIN_USERNAME}
+      secret-key: ${MINIO_ADMIN_PASSPHRASE}
