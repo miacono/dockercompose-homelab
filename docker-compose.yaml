@@ -3,19 +3,44 @@ secrets:
     file: ./secrets/juicefs-priv-key.pem
 
 services:
-  busybox:
-    image: busybox
-    command: "ls /data"
-    volumes:
-      - jfsvolume:/data
+  juicefs-format:
+    image: juicedata/mount
+    command: >
+      juicefs format
+      --storage s3
+      --bucket https://minio
+      --access-key=${MINIO_ADMIN_USERNAME}
+      --secret-key=${MINIO_ADMIN_PASSPHRASE}
+      rediss://${REDIS_USERNAME}:${REDIS_PASSPHRASE}@redis:6379/1
+      backupvol
+    depends_on:
+      - minio
+      - redis
+
+
+  juicefs-mount:
+      image: juicedata/mount
+      container_name: backupvol
+      depends_on:
+        - juicefs-format
+      volumes:
+        - ./mnt:/mnt:rw,rshared
+      cap_add:
+        - SYS_ADMIN
+      devices:
+        - /dev/fuse
+      security_opt: 
+        - apparmor:unconfined
+      command: ["juicefs", "mount", "rediss://${REDIS_USERNAME}:${REDIS_PASSPHRASE}@redis:6379/1", "/mnt"]
+      restart: unless-stopped
 
 
   minio:
     container_name: minio
     image: minio/minio:latest
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+    # ports:
+    #   - "9000:9000"
+    #   - "9001:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ADMIN_USERNAME}
       MINIO_ROOT_PASSWORD: ${MINIO_ADMIN_PASSPHRASE}
@@ -38,16 +63,16 @@ services:
       exit 0;
       "
 
+  redis:
+    container_name: redis
+    image: redis
+    restart: always
+    # ports:
+    #   - '6379:6379'
+    command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSPHRASE}
+    volumes: 
+      - /tmp/redis/data:/data
+
 volumes:
-  jfsvolume:
-    driver: juicedata/juicefs
-    driver_opts:
-      name: jfsvolume
-      # SQLite creates the database file in the plugin container's local path,
-      # and sqlite:// will fail when the service is restarted.
-      # (See https://github.com/juicedata/docker-volume-juicefs/issues/37 for details)
-      metaurl: http://localhost:9000/
-      storage: S3
-      bucket: megas4
-      access-key: ${MINIO_ADMIN_USERNAME}
-      secret-key: ${MINIO_ADMIN_PASSPHRASE}
+  redisvol:
+    driver: local
