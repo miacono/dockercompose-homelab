@@ -3,76 +3,114 @@ secrets:
     file: ./secrets/juicefs-priv-key.pem
 
 services:
-  juicefs-format:
-    image: juicedata/mount
-    command: >
-      juicefs format
-      --storage s3
-      --bucket https://minio
-      --access-key=${MINIO_ADMIN_USERNAME}
-      --secret-key=${MINIO_ADMIN_PASSPHRASE}
-      rediss://${REDIS_USERNAME}:${REDIS_PASSPHRASE}@redis:6379/1
-      backupvol
-    depends_on:
-      - minio
-      - redis
-
-
-  juicefs-mount:
-      image: juicedata/mount
-      container_name: backupvol
-      depends_on:
-        - juicefs-format
-      volumes:
-        - ./mnt:/mnt:rw,rshared
-      cap_add:
-        - SYS_ADMIN
-      devices:
-        - /dev/fuse
-      security_opt: 
-        - apparmor:unconfined
-      command: ["juicefs", "mount", "rediss://${REDIS_USERNAME}:${REDIS_PASSPHRASE}@redis:6379/1", "/mnt"]
-      restart: unless-stopped
-
 
   minio:
     container_name: minio
     image: minio/minio:latest
-    # ports:
-    #   - "9000:9000"
-    #   - "9001:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ADMIN_USERNAME}
       MINIO_ROOT_PASSWORD: ${MINIO_ADMIN_PASSPHRASE}
-    restart: always
-    volumes:
-      - /tmp/minio/data:/data
     command: server /data --console-address ":9001"
-
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - internal-net
+    # volumes:
+    #   - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
 
   createbuckets:
+    container_name: createbuckets
     image: quay.io/minio/mc:RELEASE.2025-03-12T17-29-24Z
     depends_on:
       - minio
     restart: on-failure
     entrypoint: >
       /bin/sh -c "
-      sleep 5;
+      sleep 1;
       /usr/bin/mc alias set dockerminio http://minio:9000 ${MINIO_ADMIN_USERNAME} ${MINIO_ADMIN_PASSPHRASE};
       /usr/bin/mc mb dockerminio/megas4/subdir;
       exit 0;
       "
+    networks:
+      - internal-net
 
   redis:
     container_name: redis
-    image: redis
-    restart: always
-    # ports:
-    #   - '6379:6379'
+    image: redis:alpine
     command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSPHRASE}
-    volumes: 
-      - /tmp/redis/data:/data
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    networks:
+      - internal-net
+    # volumes: 
+    #   - redis_data:/data
+    healthcheck:
+      test: "REDISCLI_AUTH=\"${REDIS_PASSPHRASE}\" /usr/local/bin/redis-cli ping"
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-volumes:
-  redisvol:
-    driver: local
+
+  juicefs-mount:
+    container_name: jfs-backup
+    image: juicedata/mount
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME}
+      MINIO_PREFIX: ${MINIO_PREFIX}
+      MINIO_ACCESS_KEY: ${MINIO_ADMIN_USERNAME}
+      MINIO_SECRET_KEY: ${MINIO_ADMIN_PASSPHRASE}
+      REDIS_USERNAME: ${REDIS_USERNAME}
+      REDIS_PASSPHRASE: ${REDIS_PASSPHRASE}
+      JFS_MOUNT_POINT: ${JFS_MOUNT_POINT}
+      JFS_NAME: ${JFS_NAME}
+      JFS_RSA_PASSPHRASE: ${JFS_KEY_PASSPHRASE}
+    secrets:
+      - source: juicefs_encryption_key
+        target: juicefs_encryption_key.pem
+    command: >
+      sleep 10
+      &&
+      juicefs format
+      --storage s3
+      --bucket http://minio:9000/${MINIO_BUCKET_NAME}/${MINIO_PREFIX}
+      --access-key ${MINIO_ADMIN_USERNAME}
+      --secret-key ${MINIO_ADMIN_PASSPHRASE}
+      --encrypt-rsa-key /run/secrets/juicefs_encryption_key.pem
+      redis://${REDIS_USERNAME}:${REDIS_PASSPHRASE}@redis:6379/1
+      backupvol 
+      || echo 'Already formatted' 
+      && juicefs mount
+      redis://redis
+      ${JFS_MOUNT_POINT}/${JFS_NAME}
+      &&
+      sleep 1200
+    privileged: true
+    restart: unless-stopped
+    networks:
+      - internal-net
+    depends_on:
+      - minio
+      - redis
+      - createbuckets
+    healthcheck:
+      test: "ls ${JFS_MOUNT_POINT}/${JFS_NAME}"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+# volumes:
+#   minio_data:
+#   redis_data:
+
+networks:
+  internal-net:
