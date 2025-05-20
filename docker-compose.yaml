@@ -76,23 +76,23 @@ services:
     secrets:
       - source: juicefs_encryption_key
         target: juicefs_encryption_key.pem
-    command: >
-      sleep 10
-      &&
-      juicefs format
-      --storage s3
-      --bucket http://minio:9000/${MINIO_BUCKET_NAME}/${MINIO_PREFIX}
-      --access-key ${MINIO_ADMIN_USERNAME}
-      --secret-key ${MINIO_ADMIN_PASSPHRASE}
-      --encrypt-rsa-key /run/secrets/juicefs_encryption_key.pem
-      redis://${REDIS_USERNAME}:${REDIS_PASSPHRASE}@redis:6379/1
-      backupvol 
-      || echo 'Already formatted' 
-      && juicefs mount
-      redis://redis
-      ${JFS_MOUNT_POINT}/${JFS_NAME}
-      &&
-      sleep 1200
+    command: bash -c "
+        juicefs format
+        --storage s3
+        --bucket http://minio:9000/${MINIO_BUCKET_NAME}/
+        --access-key ${MINIO_ADMIN_USERNAME}
+        --secret-key ${MINIO_ADMIN_PASSPHRASE}
+        --encrypt-rsa-key /run/secrets/juicefs_encryption_key.pem
+        redis://${REDIS_USERNAME}:${REDIS_PASSPHRASE}@redis:6379/1
+        ${MINIO_PREFIX}
+        || echo 'Volume already formatted' 
+        && juicefs mount
+        --verbose
+        redis://${REDIS_USERNAME}:${REDIS_PASSPHRASE}@redis:6379/1
+        ${JFS_MOUNT_POINT}/${JFS_NAME}
+        &&
+        tail -F /dev/null
+      "
     privileged: true
     restart: unless-stopped
     networks:
@@ -100,7 +100,6 @@ services:
     depends_on:
       - minio
       - redis
-      - createbuckets
     healthcheck:
       test: "ls ${JFS_MOUNT_POINT}/${JFS_NAME}"
       interval: 10s
