@@ -16,7 +16,7 @@ This repo is meant to be used in case of disaster recovery for my home lab.
 * The folder `./secrets` contains a pem file created by running
 
     ```console
-    openssl genrsa -out juicefs-priv-key.pem -aes256 2048` command
+    openssl genrsa -out juicefs-priv-key.pem -aes256 2048
     ```
 
 * The `.env` file is properly set
