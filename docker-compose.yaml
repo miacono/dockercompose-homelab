@@ -8,8 +8,8 @@ services:
     container_name: minio
     image: minio/minio:latest
     environment:
-      MINIO_ROOT_USER: ${MINIO_ADMIN_USERNAME}
-      MINIO_ROOT_PASSWORD: ${MINIO_ADMIN_PASSPHRASE}
+      MINIO_ROOT_USER: ${S3_USERNAME}
+      MINIO_ROOT_PASSWORD: ${S3_PASSPHRASE}
     command: server /data --console-address ":9001"
     restart: unless-stopped
     ports:
@@ -17,8 +17,6 @@ services:
       - "9001:9001"
     networks:
       - internal-net
-    # volumes:
-    #   - minio_data:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
@@ -34,7 +32,7 @@ services:
     entrypoint: >
       /bin/sh -c "
       sleep 1;
-      /usr/bin/mc alias set dockerminio http://minio:9000 ${MINIO_ADMIN_USERNAME} ${MINIO_ADMIN_PASSPHRASE};
+      /usr/bin/mc alias set dockerminio http://minio:9000 ${S3_USERNAME} ${S3_PASSPHRASE};
       /usr/bin/mc mb dockerminio/megas4/subdir;
       exit 0;
       "
@@ -46,8 +44,6 @@ services:
     image: redis:alpine
     command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSPHRASE}
     restart: unless-stopped
-    ports:
-      - '6379:6379'
     networks:
       - internal-net
     # volumes: 
@@ -59,15 +55,15 @@ services:
       retries: 5
 
 
-  juicefs-mount:
+  jfs-backup:
     container_name: jfs-backup
     image: juicedata/mount
     environment:
       MINIO_ENDPOINT: http://minio:9000
-      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME}
-      MINIO_PREFIX: ${MINIO_PREFIX}
-      MINIO_ACCESS_KEY: ${MINIO_ADMIN_USERNAME}
-      MINIO_SECRET_KEY: ${MINIO_ADMIN_PASSPHRASE}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      S3_PREFIX: ${S3_PREFIX}
+      MINIO_ACCESS_KEY: ${S3_USERNAME}
+      MINIO_SECRET_KEY: ${S3_PASSPHRASE}
       REDIS_USERNAME: ${REDIS_USERNAME}
       REDIS_PASSPHRASE: ${REDIS_PASSPHRASE}
       JFS_MOUNT_POINT: ${JFS_MOUNT_POINT}
@@ -79,12 +75,12 @@ services:
     command: bash -c "
         juicefs format
         --storage s3
-        --bucket http://minio:9000/${MINIO_BUCKET_NAME}/
-        --access-key ${MINIO_ADMIN_USERNAME}
-        --secret-key ${MINIO_ADMIN_PASSPHRASE}
+        --bucket http://minio:9000/${S3_BUCKET_NAME}/
+        --access-key ${S3_USERNAME}
+        --secret-key ${S3_PASSPHRASE}
         --encrypt-rsa-key /run/secrets/juicefs_encryption_key.pem
         redis://${REDIS_USERNAME}:${REDIS_PASSPHRASE}@redis:6379/1
-        ${MINIO_PREFIX}
+        ${S3_PREFIX}
         || echo 'Volume already formatted' 
         && juicefs mount
         --verbose
@@ -94,7 +90,15 @@ services:
         tail -F /dev/null
       "
     privileged: true
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    security_opt: 
+      - apparmor:unconfined
     restart: unless-stopped
+    volumes:
+      - ./mnt:${JFS_MOUNT_POINT}/${JFS_NAME}:rw,rshared
     networks:
       - internal-net
     depends_on:
@@ -106,10 +110,35 @@ services:
       timeout: 5s
       retries: 5
 
-
-# volumes:
-#   minio_data:
-#   redis_data:
+  deluge:
+    image: lscr.io/linuxserver/deluge:latest
+    container_name: deluge
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - DELUGE_LOGLEVEL=error
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    security_opt: 
+      - apparmor:unconfined
+    volumes:
+      - /tmp/deluge/config:/config
+      - /tmp/deluge/downloads:/downloads
+      - ./mnt:${JFS_MOUNT_POINT}/${JFS_NAME}:rw,rshared
+    networks:
+      - internal-net
+    ports:
+      - 8112:8112
+      - 46881:46881
+      - 46881:46881/udp
+    restart: unless-stopped
+    depends_on:
+      - jfs-backup
+    entrypoint: /bin/sh -c "sleep 10 && exec /init"
 
 networks:
   internal-net:
