@@ -27,13 +27,14 @@ services:
     container_name: createbuckets
     image: quay.io/minio/mc:RELEASE.2025-03-12T17-29-24Z
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     restart: on-failure
     entrypoint: >
       /bin/sh -c "
       sleep 1;
       /usr/bin/mc alias set dockerminio http://minio:9000 ${S3_USERNAME} ${S3_PASSPHRASE};
-      /usr/bin/mc mb dockerminio/megas4/subdir;
+      /usr/bin/mc mb dockerminio/${S3_BUCKET_NAME}/${S3_PREFIX};
       exit 0;
       "
     networks:
@@ -126,9 +127,7 @@ services:
     security_opt: 
       - apparmor:unconfined
     volumes:
-      - /tmp/deluge/config:/config
-      - /tmp/deluge/downloads:/downloads
-      - ./mnt:${JFS_MOUNT_POINT}/${JFS_NAME}:rw,rshared
+      - ./mnt/${JFS_NAME}:${JFS_MOUNT_POINT}/${JFS_NAME}:rw,rshared
     networks:
       - internal-net
     ports:
@@ -137,8 +136,8 @@ services:
       - 46881:46881/udp
     restart: unless-stopped
     depends_on:
-      - jfs-backup
-    entrypoint: /bin/sh -c "sleep 10 && exec /init"
+      jfs-backup:
+        condition: service_healthy
 
 networks:
   internal-net:
